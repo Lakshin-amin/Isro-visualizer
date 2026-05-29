@@ -220,19 +220,19 @@ const LEO_AU_VIS  = LEO_AU * 60;
  * @param {number} phaseOffset - unique angle offset per mission
  * @returns {{ x, y, z }} geocentric offset in AU (visual scale)
  */
-function getEORPosition(t, jd, phaseOffset, elapsedDays) {
+function getEORPosition(t, jd, phaseOffset) {
   // Semi-major axis: starts at LEO, grows to 0.8× Moon distance at end of EOR
   const rMin = LEO_AU_VIS;
   const rMax = MOON_AU_VIS * 0.80;
-  const r    = rMin + (rMax - rMin) * Math.pow(t, 0.6);
+  const r    = rMin + (rMax - rMin) * Math.pow(t, 0.6); // eases out — fast early, slow late
 
-  // Use elapsedDays (days since launch, small number) for angle — NOT jd.
-  // jd is ~2,460,000 which causes float precision loss at high orbitsPerDay,
-  // producing wild angle jumps between arc sample points → spike artifacts.
-  const orbitsPerDay = 16 * (1 - t * 0.92); // 16 → 1.3 orbits/day as apogee rises
-  const daysSrc = (elapsedDays !== undefined) ? elapsedDays : ((jd - 2451545.0));
-  const angle = (daysSrc * orbitsPerDay * Math.PI * 2) % (Math.PI * 2) + phaseOffset;
+  // Orbit period shrinks as apogee rises: rough approximation from Kepler 3rd law
+  // T ∝ a^1.5 — at LEO ~90min, at Moon distance ~656 hrs
+  // Visual speed: complete ~1 orbit per day at LEO, slow to 1/20 orbit per day near Moon
+  const orbitsPerDay = 16 * (1 - t * 0.92); // interpolate from 16 → 1.3 orbits/day
+  const angle = ((jd * orbitsPerDay) * Math.PI * 2) % (Math.PI * 2) + phaseOffset;
 
+  // Small inclination wobble (realistic — ISRO uses 28.5° inclined parking orbit)
   const inclFactor = Math.sin(angle * 0.5) * 0.12;
 
   return {
@@ -314,7 +314,7 @@ function getLunarTransferPos(cfg, launch, date, jd, moonVis, missionEnd, finalR 
   // ── Phase 1+2: EPO + Earth Orbit Raising ──────────────────────────────────
   if (elapsed <= eorEnd) {
     const t = elapsed / eorEnd;
-    return getEORPosition(t, jd, cfg.phaseOffset, elapsed);
+    return getEORPosition(t, jd, cfg.phaseOffset);
   }
 
   // ── Phase 3: TLI coast ────────────────────────────────────────────────────
@@ -873,8 +873,7 @@ export function getMissionFullArc(missionId, currentDate, steps = 160) {
       for (let i = 0; i <= steps; i++) {
         const t = i / steps;
         const h = getInterplanetaryTransferPos(t, earthAtLaunch, targetAtArrival, cfg.inner);
-        const s = helioToScene(h);
-        if (isFinite(s.x) && isFinite(s.y) && isFinite(s.z)) full.push(s);
+        full.push(helioToScene(h));
       }
     }
   }
@@ -901,10 +900,7 @@ export function getMissionFullArc(missionId, currentDate, steps = 160) {
     for (let i = 0; i <= steps; i++) {
       const t   = launch.getTime() + (i / steps) * (arrival.getTime() - launch.getTime());
       const pos = getMissionScenePos(missionId, new Date(t));
-      // Guard: skip NaN / Infinity points that would cause spike artifacts
-      if (isFinite(pos.x) && isFinite(pos.y) && isFinite(pos.z)) {
-        full.push({ x: pos.x, y: pos.y, z: pos.z });
-      }
+      full.push({ x: pos.x, y: pos.y, z: pos.z });
     }
   }
 
@@ -920,76 +916,4 @@ export function getMissionFullArc(missionId, currentDate, steps = 160) {
 
   if (afterTransfer) return { traveled: full, predicted: [], full, inTransfer: false };
   return { traveled, predicted, full, inTransfer };
-}
-
-// ─── Conjunction & Opposition Calculator ──────────────────────────────────────
-/**
- * Returns upcoming conjunctions and oppositions for all planets vs Earth.
- *
- * Conjunction: planet and Earth on same side of Sun (elongation < threshold)
- * Opposition:  planet and Earth on opposite sides of Sun (elongation > 180-threshold)
- *   (only outer planets have oppositions; inner planets have inferior/superior conjunction)
- *
- * Scans from `date` forward over `scanDays` in daily steps.
- * Returns the next event per planet (not all events).
- */
-export function getConjunctionsAndOppositions(date, scanDays = 730) {
-  const events = [];
-  const outerPlanets  = ['mars', 'jupiter', 'saturn', 'uranus', 'neptune'];
-  const innerPlanets  = ['mercury', 'venus'];
-  const allPlanets    = [...innerPlanets, ...outerPlanets];
-  const MS_PER_DAY    = 86400000;
-  const CONJ_THRESH   = 5;   // degrees — within this = conjunction
-  const OPP_THRESH    = 5;   // degrees from 180 = opposition
-
-  // For each planet, scan for the next conjunction/opposition
-  for (const planet of allPlanets) {
-    let prevElongation = null;
-    let foundConj = false, foundOpp = false;
-
-    for (let d = 0; d <= scanDays; d++) {
-      const t = new Date(date.getTime() + d * MS_PER_DAY);
-      const earth  = getPlanetHeliocentricXYZ('earth', t);
-      const pl     = getPlanetHeliocentricXYZ(planet, t);
-
-      // Ecliptic longitude (2D angle from Sun)
-      const earthLon = Math.atan2(earth.y, earth.x) * 180 / Math.PI;
-      const plLon    = Math.atan2(pl.y, pl.x) * 180 / Math.PI;
-
-      // Angular separation (0–180)
-      let sep = Math.abs(earthLon - plLon) % 360;
-      if (sep > 180) sep = 360 - sep;
-
-      if (!foundConj && sep < CONJ_THRESH) {
-        const scenePos = getPlanetScenePos(planet, t);
-        events.push({
-          planet, type: 'conjunction', date: new Date(t),
-          separation: sep.toFixed(2),
-          label: `${planet.charAt(0).toUpperCase() + planet.slice(1)} Conjunction`,
-          scenePos,
-          color: '#FFD700',
-        });
-        foundConj = true;
-      }
-
-      if (!foundOpp && outerPlanets.includes(planet) && sep > 180 - OPP_THRESH) {
-        const scenePos = getPlanetScenePos(planet, t);
-        events.push({
-          planet, type: 'opposition', date: new Date(t),
-          separation: sep.toFixed(2),
-          label: `${planet.charAt(0).toUpperCase() + planet.slice(1)} Opposition`,
-          scenePos,
-          color: '#FF6B6B',
-        });
-        foundOpp = true;
-      }
-
-      if (foundConj && (innerPlanets.includes(planet) || foundOpp)) break;
-      prevElongation = sep;
-    }
-  }
-
-  // Sort by date
-  events.sort((a, b) => a.date - b.date);
-  return events;
 }

@@ -116,12 +116,10 @@ export default function Moon({ date, onHover, onClick, isSelected }) {
     const pos = getMoonScenePos(date);
     groupRef.current.position.set(pos.x, pos.y, pos.z);
 
-    // Moon rotation: tidally locked — one rotation per 27.3217-day orbit.
-    // Use elapsed days since J2000 (small number) to avoid float precision loss.
+    // Moon rotation: tidally locked — rotates once per orbit (27.3 days)
     if (meshRef.current) {
-      const J2000_MS = Date.UTC(2000, 0, 1, 12, 0, 0);
-      const elapsedDays = (date.getTime() - J2000_MS) / 86400000;
-      meshRef.current.rotation.y = (elapsedDays / 27.3217) * Math.PI * 2;
+      const jd = toJulianDate(date);
+      meshRef.current.rotation.y = (jd / 27.3217) * Math.PI * 2;
     }
   });
 

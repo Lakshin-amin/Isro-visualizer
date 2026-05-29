@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import './index.css';
 import SolarSystem from './components/SolarSystem';
 import MissionPanel from './components/MissionPanel';
@@ -13,49 +13,8 @@ import UpcomingPanel from './components/UpcomingPanel';
 import AddMissionModal from './components/AddMissionModal';
 import { CornerTelemetry, MissionLegend } from './components/TelemetryWidgets';
 import { useMissions } from './hooks/useMissions';
-import { getPlanetScenePos, getMissionScenePos, getMoonScenePos, registerMissions, AU_TO_SCENE, getConjunctionsAndOppositions } from './utils/orbits';
+import { getPlanetScenePos, getMissionScenePos, getMoonScenePos, registerMissions } from './utils/orbits';
 import { sound } from './utils/sound';
-
-const PLANET_COLORS = {
-  mercury:'#B5B5B5', venus:'#E8C07D', mars:'#C1440E',
-  jupiter:'#C88B3A', saturn:'#E4D191', uranus:'#7DE8E8', neptune:'#3F54BA',
-};
-
-function ConjunctionPanel({ date }) {
-  const events = useMemo(() => getConjunctionsAndOppositions(date, 730), [
-    Math.floor(date.getTime() / (86400000 * 7)) // recompute weekly
-  ]);
-
-  const fmt = (d) => d.toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' });
-  const daysUntil = (d) => Math.round((d - date) / 86400000);
-
-  return (
-    <div className="conj-panel">
-      <div className="conj-panel__title">
-        <span>⟡ CONJUNCTIONS &amp; OPPOSITIONS</span>
-        <span className="conj-panel__sub">Next 2 years · from {fmt(date)}</span>
-      </div>
-      <div className="conj-panel__list">
-        {events.slice(0, 10).map((ev, i) => (
-          <div key={i} className={`conj-event conj-event--${ev.type}`}>
-            <span className="conj-dot" style={{ background: PLANET_COLORS[ev.planet] || '#fff' }}/>
-            <span className="conj-planet">{ev.planet.charAt(0).toUpperCase() + ev.planet.slice(1)}</span>
-            <span className={`conj-type conj-type--${ev.type}`}>
-              {ev.type === 'conjunction' ? 'CONJ' : 'OPP'}
-            </span>
-            <span className="conj-date">{fmt(ev.date)}</span>
-            <span className="conj-days">
-              {daysUntil(ev.date) <= 0 ? 'now' : `in ${daysUntil(ev.date)}d`}
-            </span>
-          </div>
-        ))}
-        {events.length === 0 && (
-          <div className="conj-empty">No events found in scan window</div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 export default function App() {
   const { missions, addMission, removeMission, isCustom } = useMissions();
@@ -69,7 +28,6 @@ export default function App() {
   const [showOrbits,       setShowOrbits]  = useState(true);
   const [orbitBrightness,  setOrbitBright] = useState(0.55);
   const [showConst,        setShowConst]   = useState(false);
-  const [showConjunctions, setShowConj]    = useState(false);
   const [showLabels,       setShowLabels]  = useState(true);
   const [scaleMultiplier,  setScaleMult]   = useState(1.0);
   const [sizeMode,         setSizeMode]    = useState('artistic');
@@ -79,8 +37,6 @@ export default function App() {
   const [soundEnabled,     setSoundEnabled]= useState(false);
   const [theme,            setTheme]       = useState('dark');
   const [flyTarget,        setFlyTarget]   = useState(null);
-  const [rulerMode,        setRulerMode]   = useState(false);
-  const [rulerPoints,      setRulerPoints] = useState([]);   // [{id, name, scenePos, type}]
   const [compareMode,      setCompareMode] = useState(false);
   const [compareMissions,  setCompare]     = useState([null, null]);
   const [showCompare,      setShowCompare] = useState(false);
@@ -93,24 +49,14 @@ export default function App() {
     registerMissions(missions);
   }, [missions]);
 
-  // Lunar missions — fly to Moon, show model there
-  const LUNAR_MISSION_IDS = new Set(['chandrayaan1', 'chandrayaan2', 'chandrayaan3', 'lupex', 'chandrayaan4']);
-
   const handleMissionSelect = useCallback((mission) => {
     const isSame = selectedMission?.id === mission.id;
     if (isSame) { setSelMission(null); setScView(null); return; }
     setSelMission(mission);
     setMoonSel(false);
     sound.playFocus();
-
-    if (LUNAR_MISSION_IDS.has(mission.id)) {
-      // Fly to Moon, not Earth — lunar missions live there
-      const moonPos = getMoonScenePos(date);
-      setFlyTarget({ ...moonPos, zoom: 1.2 });
-    } else {
-      const pos = getMissionScenePos(mission.id, date);
-      setFlyTarget({ ...pos, zoom: 2.0 });
-    }
+    const pos = getMissionScenePos(mission.id, date);
+    setFlyTarget({ ...pos, zoom: 2.0 });
     setTimeout(() => setScView(mission), 1800);
   }, [selectedMission, date]);
 
@@ -118,50 +64,18 @@ export default function App() {
     setScView(mission); sound.playLaunch();
   }, []);
 
-  // ── Distance Ruler ────────────────────────────────────────────────────────
-  const handleRulerClick = useCallback((obj) => {
-    if (!rulerMode) return;
-    let scenePos;
-    if (obj.id === 'moon') {
-      scenePos = getMoonScenePos(date);
-    } else if (obj.type === 'planet' || obj.type === 'star') {
-      scenePos = getPlanetScenePos(obj.id, date);
-    } else {
-      scenePos = getMissionScenePos(obj.id, date);
-    }
-    setRulerPoints(prev => {
-      if (prev.length === 0) return [{ ...obj, scenePos }];
-      if (prev.length === 1) return [prev[0], { ...obj, scenePos }];
-      return [{ ...obj, scenePos }];
-    });
-  }, [rulerMode, date]);
-
   const handlePlanetClick = useCallback((planet) => {
-    if (rulerMode) { handleRulerClick(planet); return; }
     sound.playFocus(); setSelMission(null); setMoonSel(false);
     if (!planet || planet.id === 'sun') { setFlyTarget({ x:0,y:0,z:0,zoom:120 }); return; }
     const pos = getPlanetScenePos(planet.id, date);
     setFlyTarget({ ...pos, zoom:18 });
-  }, [date, rulerMode, handleRulerClick]);
+  }, [date]);
 
   const handleMoonClick = useCallback(() => {
-    if (rulerMode) { handleRulerClick({ id:'moon', name:'Moon', type:'moon' }); return; }
     sound.playFocus(); setMoonSel(true); setSelMission(null);
     const pos = getMoonScenePos(date);
     setFlyTarget({ ...pos, zoom:3 });
-  }, [date, rulerMode, handleRulerClick]);
-
-  const rulerDistance = (() => {
-    if (rulerPoints.length < 2) return null;
-    const a = rulerPoints[0].scenePos;
-    const b = rulerPoints[1].scenePos;
-    const dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
-    const sceneUnits = Math.sqrt(dx*dx + dy*dy + dz*dz);
-    const au = sceneUnits / AU_TO_SCENE;
-    const km = au * 149597870.7;
-    const lightMinutes = au * 8.317; // light travel time in minutes
-    return { au: au.toFixed(4), km: Math.round(km).toLocaleString(), lightMinutes: lightMinutes.toFixed(1) };
-  })();
+  }, [date]);
 
   const handleFocusObject = useCallback((obj) => {
     sound.playPing();
@@ -233,14 +147,12 @@ export default function App() {
           showOrbits={showOrbits}        onToggleOrbits={() => setShowOrbits(p=>!p)}
           orbitBrightness={orbitBrightness} onOrbitBrightness={setOrbitBright}
           showConstellation={showConst}  onToggleConstellation={() => setShowConst(p=>!p)}
-          showConjunctions={showConjunctions} onToggleConjunctions={() => setShowConj(p=>!p)}
           soundEnabled={soundEnabled}    onToggleSound={handleToggleSound}
           theme={theme}                  onToggleTheme={() => setTheme(t => t==='dark'?'light':'dark')}
           onFocusObject={handleFocusObject}
           compareMode={compareMode}      onToggleCompare={() => { setCompareMode(p=>!p); if(!compareMode) setShowCompare(true); }}
           showUpcoming={showUpcoming}    onToggleUpcoming={() => setShowUpcoming(p=>!p)}
           onAddMission={() => setShowAddModal(true)}
-          rulerMode={rulerMode}          onToggleRuler={() => { setRulerMode(p => !p); setRulerPoints([]); }}
           showLabels={showLabels}         onToggleLabels={() => setShowLabels(p=>!p)}
           scaleMultiplier={scaleMultiplier}  onScaleMultiplier={setScaleMult}
           sizeMode={sizeMode}               onSizeMode={setSizeMode}
@@ -281,37 +193,6 @@ export default function App() {
             onClose={() => { setShowCompare(false); setCompareMode(false); setCompare([null,null]); }}
           />
         )}
-        {rulerMode && (
-          <div className="ruler-hud">
-            <div className="ruler-hud__title">📏 DISTANCE RULER</div>
-            <div className="ruler-hud__steps">
-              <div className={`ruler-step ${rulerPoints.length >= 1 ? 'ruler-step--done' : 'ruler-step--active'}`}>
-                {rulerPoints[0] ? `A: ${rulerPoints[0].name}` : '① Click first object'}
-              </div>
-              <div className={`ruler-step ${rulerPoints.length >= 2 ? 'ruler-step--done' : rulerPoints.length === 1 ? 'ruler-step--active' : ''}`}>
-                {rulerPoints[1] ? `B: ${rulerPoints[1].name}` : '② Click second object'}
-              </div>
-            </div>
-            {rulerDistance && (
-              <div className="ruler-hud__result">
-                <div className="ruler-metric">
-                  <span className="ruler-metric__val">{rulerDistance.au}</span>
-                  <span className="ruler-metric__unit">AU</span>
-                </div>
-                <div className="ruler-metric">
-                  <span className="ruler-metric__val">{rulerDistance.km}</span>
-                  <span className="ruler-metric__unit">km</span>
-                </div>
-                <div className="ruler-metric">
-                  <span className="ruler-metric__val">{rulerDistance.lightMinutes}</span>
-                  <span className="ruler-metric__unit">light-min</span>
-                </div>
-                <div className="ruler-hud__reset" onClick={() => setRulerPoints([])}>↺ reset</div>
-              </div>
-            )}
-          </div>
-        )}
-
         {showUpcoming && (
           <UpcomingPanel
             missions={missions}
@@ -319,8 +200,8 @@ export default function App() {
             onSelect={(mission) => { handleMissionSelect(mission); setShowUpcoming(false); }}
           />
         )}
-        {showConjunctions && <ConjunctionPanel date={date} />}
-        <TimeScrubber date={date} onDateChange={setDate} />        <MissionLegend />
+        <TimeScrubber date={date} onDateChange={setDate} />
+        <MissionLegend />
         <CornerTelemetry date={date} />
       </div>
     </>

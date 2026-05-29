@@ -2,7 +2,7 @@ import { useRef, useState, useCallback, useMemo, Suspense } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Stars, Html } from '@react-three/drei';
 import * as THREE from 'three';
-import { PLANETS, PLANET_INFO } from '../data/missions';
+import { PLANETS } from '../data/missions';
 import {
   getPlanetScenePos, getOrbitPoints, getMissionScenePos,
   KEPLERIAN_ELEMENTS, getMoonScenePos,
@@ -17,33 +17,6 @@ const TILTS = {
   mercury:0.034, venus:177.4, earth:23.44, mars:25.19,
   jupiter:3.13, saturn:26.73, uranus:97.77, neptune:28.32,
 };
-
-// Real sidereal rotation periods in Earth days.
-// Negative = retrograde (Venus, Uranus spin backwards relative to their orbit).
-// Source: NASA planetary fact sheets.
-const ROTATION_PERIODS_DAYS = {
-  mercury:  58.646,   // 58.6 Earth days
-  venus:  -243.025,   // retrograde — slower than its own orbit!
-  earth:    0.9973,   // 23h 56m
-  mars:     1.026,    // 24h 37m — almost same as Earth
-  jupiter:  0.4135,   // 9h 56m — fastest in solar system
-  saturn:   0.4440,   // 10h 33m
-  uranus:  -0.7183,   // 17h 14m, retrograde (axial tilt ~98°)
-  neptune:  0.6713,   // 16h 6m
-  moon:     27.321,   // tidally locked — same as orbital period
-};
-
-// J2000 epoch as JS timestamp for rotation reference
-const J2000_MS = Date.UTC(2000, 0, 1, 12, 0, 0);
-
-/** Returns rotation angle (radians) for a planet at a given date. */
-function getPlanetRotationAngle(planetId, date) {
-  const period = ROTATION_PERIODS_DAYS[planetId];
-  if (!period) return 0;
-  const elapsedDays = (date.getTime() - J2000_MS) / 86400000;
-  // Full rotations elapsed; multiply by 2π for radians
-  return (elapsedDays / period) * Math.PI * 2;
-}
 // ─── Real planetary equatorial radii (km) ────────────────────────────────────
 const REAL_RADII_KM = {
   sun:    696340,
@@ -326,99 +299,14 @@ function Sun({ onClick, onHover, showLabels, sizeMode, sizeMultiplier }) {
       </mesh>
       <mesh ref={g1}><sphereGeometry args={[getSunRadius(sizeMode,sizeMultiplier)*1.25,32,32]}/><meshBasicMaterial color="#FF9900" transparent opacity={0.09} side={THREE.BackSide}/></mesh>
       <mesh ref={g2}><sphereGeometry args={[getSunRadius(sizeMode,sizeMultiplier)*1.75,32,32]}/><meshBasicMaterial color="#FF4400" transparent opacity={0.035} side={THREE.BackSide}/></mesh>
-      {/* Main sun light — low decay so it reaches Neptune (~100 scene units away) */}
-      <pointLight color="#FFF8E7" intensity={18} distance={1200} decay={0.5}/>
-      {/* Warm inner glow for Mercury/Venus/Earth visual warmth */}
-      <pointLight color="#FF8800" intensity={4}  distance={200}  decay={1.5}/>
+      <pointLight color="#FFF8E7" intensity={10} distance={800} decay={0.9}/>
+      <pointLight color="#FF8800" intensity={3} distance={160} decay={2}/>
       {showLabels && <PlanetLabel planetId="sun" radius={getSunRadius(sizeMode,sizeMultiplier)*2} date={new Date()} onClick={()=>onClick({id:'sun',name:'Sun',type:'star',diameter:'1,392,700 km',moons:0})}/>}
     </group>
   );
 }
 
 // ─── Orbit Path ───────────────────────────────────────────────────────────────
-
-// ─── Planet Trail ─────────────────────────────────────────────────────────────
-// Per-planet color for the trail (warmer/cooler than orbit ring)
-const TRAIL_COLORS = {
-  mercury: '#a0a0b0',
-  venus:   '#d4a84b',
-  earth:   '#3a7bd5',
-  mars:    '#cc4422',
-  jupiter: '#c8883a',
-  saturn:  '#d4c070',
-  uranus:  '#50d8d8',
-  neptune: '#4060cc',
-};
-
-// How many Earth-days back the trail extends per planet.
-// Outer planets move slowly so need longer trails to be visible.
-const TRAIL_DAYS = {
-  mercury:  88,    // one full orbit
-  venus:    224,
-  earth:    365,
-  mars:     365,
-  jupiter:  1460,  // ~4 years
-  saturn:   3650,  // ~10 years
-  uranus:   10000,
-  neptune:  20000,
-};
-
-const TRAIL_STEPS = 120; // sample points — enough for smooth curve, cheap to compute
-
-function PlanetTrail({ planetId, date }) {
-  const geoRef    = useRef();
-  const colRef    = useRef();
-  const lineRef   = useRef();
-
-  // Sample past positions and build fading vertex colours
-  const { positions, colors } = useMemo(() => {
-    const days    = TRAIL_DAYS[planetId]  || 365;
-    const col     = new THREE.Color(TRAIL_COLORS[planetId] || '#ffffff');
-    const now     = date.getTime();
-    const stepMs  = (days * 86400000) / TRAIL_STEPS;
-
-    const positions = new Float32Array(TRAIL_STEPS * 3);
-    const colors    = new Float32Array(TRAIL_STEPS * 3);
-
-    for (let i = 0; i < TRAIL_STEPS; i++) {
-      // i=0 is oldest (tail end), i=TRAIL_STEPS-1 is current (head)
-      const t   = now - (TRAIL_STEPS - 1 - i) * stepMs;
-      const pos = getPlanetScenePos(planetId, new Date(t));
-
-      positions[i * 3]     = pos.x;
-      positions[i * 3 + 1] = pos.y;
-      positions[i * 3 + 2] = pos.z;
-
-      // Opacity ramps from 0 (tail) → 0.75 (head)
-      const alpha = Math.pow(i / (TRAIL_STEPS - 1), 1.8) * 0.75;
-      colors[i * 3]     = col.r * alpha;
-      colors[i * 3 + 1] = col.g * alpha;
-      colors[i * 3 + 2] = col.b * alpha;
-    }
-
-    return { positions, colors };
-  }, [planetId, Math.floor(date.getTime() / 3600000)]); // recompute every simulated hour
-
-  const geo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    g.setAttribute('color',    new THREE.BufferAttribute(colors,    3));
-    return g;
-  }, [positions, colors]);
-
-  return (
-    <line ref={lineRef} geometry={geo}>
-      <lineBasicMaterial
-        vertexColors
-        transparent
-        opacity={1}
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-      />
-    </line>
-  );
-}
-
 function OrbitPath({ planetId, date, highlight, brightness = 1 }) {
   const year = date.getFullYear();
   const points = useMemo(() =>
@@ -618,9 +506,9 @@ function PlanetLabel({ planetId, radius, date, onClick }) {
   return (
     <Html
       ref={ref}
-      position={[0, radius * 1.4 + 0.2, 0]}
+      position={[0, radius * 1.6 + 0.4, 0]}
       center
-      distanceFactor={18}
+      distanceFactor={60}
       occlude={false}
       zIndexRange={[0, 10]}
       style={{ pointerEvents:'none', userSelect:'none' }}
@@ -635,36 +523,40 @@ function PlanetLabel({ planetId, radius, date, onClick }) {
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          gap: 1,
+          gap: 2,
           whiteSpace: 'nowrap',
         }}
       >
-        {/* Tick line */}
+        {/* Connecting line */}
         <div style={{
           width: 1,
-          height: 5,
-          background: `${meta.color}44`,
+          height: 8,
+          background: `${meta.color}55`,
           marginBottom: 1,
         }}/>
-        {/* Name — compact, no heavy box */}
+        {/* Name badge */}
         <div style={{
           fontFamily: "'Orbitron', monospace",
-          fontSize: 7,
-          fontWeight: 600,
-          letterSpacing: '0.14em',
+          fontSize: 9,
+          fontWeight: 700,
+          letterSpacing: '0.18em',
           color: meta.color,
           textTransform: 'uppercase',
+          padding: '2px 6px',
+          background: 'rgba(0,4,12,0.72)',
+          border: `1px solid ${meta.color}44`,
+          borderRadius: 3,
+          backdropFilter: 'blur(4px)',
           lineHeight: 1.2,
-          textShadow: `0 0 6px ${meta.color}88`,
         }}>
           {meta.name}
         </div>
-        {/* Sub info — minimal */}
+        {/* Sub info */}
         <div style={{
           fontFamily: "'JetBrains Mono', monospace",
-          fontSize: 5.5,
-          letterSpacing: '0.08em',
-          color: `${meta.color}77`,
+          fontSize: 7,
+          letterSpacing: '0.1em',
+          color: `${meta.color}99`,
           textTransform: 'uppercase',
         }}>
           {meta.sub}
@@ -700,7 +592,7 @@ function MissionLabel({ mission, date, isSelected }) {
       ref={ref}
       position={[0, 0.55, 0]}
       center
-      distanceFactor={14}
+      distanceFactor={45}
       occlude={false}
       zIndexRange={[0, 10]}
       style={{ pointerEvents:'none' }}
@@ -711,27 +603,30 @@ function MissionLabel({ mission, date, isSelected }) {
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        gap: 1,
+        gap: 2,
         whiteSpace: 'nowrap',
         pointerEvents: 'none',
       }}>
         <div style={{
           fontFamily: "'Orbitron', monospace",
-          fontSize: isSelected ? 7 : 6,
-          fontWeight: 600,
-          letterSpacing: '0.12em',
+          fontSize: isSelected ? 9 : 7,
+          fontWeight: 700,
+          letterSpacing: '0.14em',
           color: mission.color,
           textTransform: 'uppercase',
+          padding: '2px 5px',
+          background: 'rgba(0,4,12,0.78)',
+          border: `1px solid ${mission.color}44`,
+          borderRadius: 3,
           lineHeight: 1.2,
-          textShadow: `0 0 5px ${mission.color}66`,
         }}>
           {mission.shortName}
         </div>
         {isSelected && (
           <div style={{
             fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 5,
-            letterSpacing: '0.08em',
+            fontSize: 7,
+            letterSpacing: '0.1em',
             color: col,
             textTransform: 'uppercase',
           }}>
@@ -771,12 +666,8 @@ function Planet({ planetId, date, onHover, onClick, isHighlighted, showLabels, s
     if (!groupRef.current) return;
     const pos = getPlanetScenePos(planetId, date);
     groupRef.current.position.set(pos.x, pos.y, pos.z);
-    // Real sidereal rotation angle derived from date — not a frame counter.
-    // This means rotation is correct relative to the time scrubber.
-    const angle = getPlanetRotationAngle(planetId, date);
-    if (meshRef.current)  meshRef.current.rotation.y  = angle;
-    // Clouds drift slightly faster than surface (realistic atmospheric super-rotation)
-    if (cloudRef.current) cloudRef.current.rotation.y = angle * 1.004;
+    if (meshRef.current) meshRef.current.rotation.y += 0.003;
+    if (cloudRef.current) cloudRef.current.rotation.y += 0.0008;
   });
 
   return (
@@ -793,14 +684,8 @@ function Planet({ planetId, date, onHover, onClick, isHighlighted, showLabels, s
           color={tex?'#ffffff':fallback}
           roughness={planetId==='earth'?0.75:planetId==='mercury'?0.7:0.88}
           metalness={planetId==='mercury'?0.25:0.02}
-          emissive={fallback}
-          emissiveIntensity={
-            isHighlighted ? 0.35 :
-            planetId==='neptune' ? 0.18 :
-            planetId==='uranus'  ? 0.14 :
-            planetId==='saturn'  ? 0.08 :
-            planetId==='jupiter' ? 0.06 : 0.0
-          }/>
+          emissive={isHighlighted?fallback:new THREE.Color(0,0,0)}
+          emissiveIntensity={isHighlighted?0.22:0}/>
       </mesh>
 
       {/* Earth clouds */}
@@ -993,8 +878,7 @@ function Spacecraft({ mission, date, isSelected, onClick, showLabels, scaleMulti
 
   useFrame(({ clock }) => {
     if (!groupRef.current) return;
-    // _posOverride lets callers (e.g. lunar missions) force a specific scene position
-    const pos = mission._posOverride || getMissionScenePos(mission.id, date);
+    const pos = getMissionScenePos(mission.id, date);
     groupRef.current.position.set(pos.x, pos.y, pos.z);
 
     // ── Camera-adaptive scale ──────────────────────────────────────────────
@@ -1006,14 +890,13 @@ function Spacecraft({ mission, date, isSelected, onClick, showLabels, scaleMulti
     const fov    = camera.fov * Math.PI / 180;
     const screenH = 2 * dist * Math.tan(fov / 2);
 
-    // Model geometry is normalised to ~0.2 scene units via the 0.1 wrapper group.
-    // 1.8% of screen height gives good visibility at all zoom levels.
-    const fraction = isSelected ? 0.026 : 0.018;
+    // Base fraction: 1.4% of screen height for normal, 2.2% when selected
+    const fraction = isSelected ? 0.022 : 0.014;
     // Raw adaptive scale
     let s = screenH * fraction * scaleMultiplier;
 
-    // Clamp: max 4.0 (wings ~0.4 units wide after 0.1 normaliser), min 0.3.
-    s = Math.max(0.3, Math.min(s, isSelected ? 6.0 : 4.0));
+    // Clamp: never bigger than a planet, never so small the model is invisible
+    s = Math.max(0.02, Math.min(s, isSelected ? 3.5 : 2.0));
 
     scaleRef.current = s;
     groupRef.current.scale.setScalar(s);
@@ -1046,11 +929,7 @@ function Spacecraft({ mission, date, isSelected, onClick, showLabels, scaleMulti
         onPointerOver={()=>{ document.body.style.cursor='pointer'; }}
         onPointerOut={()=>{ document.body.style.cursor='default'; }}>
         {Model ? (
-          // Wrap in a normalising group — model geometry spans ~2–4 units internally.
-          // Shrink to 0.1 so the adaptive scaler in useFrame works on a ~0.2-unit object.
-          <group scale={0.1}>
-            <Model scale={1} isSelected={isSelected}/>
-          </group>
+          <Model scale={1} isSelected={isSelected}/>
         ) : (
           <mesh>
             <octahedronGeometry args={[0.18, 0]}/>
@@ -1070,29 +949,30 @@ function Spacecraft({ mission, date, isSelected, onClick, showLabels, scaleMulti
 
 // ─── All Transfer Arcs ────────────────────────────────────────────────────────
 // Renders arcs for every mission that has a defined transfer window.
-// Only render trajectory arc for the selected mission.
-// Rendering ghost arcs for all missions causes dense looping blobs at solar-system
-// scale (EOR spirals, TLI arcs) that look like wireframe artifacts.
+// Selected mission: full bright arc. Others: faint ghost arc.
 function AllTrajectories({ missions, selectedMission, date }) {
+  // IDs of missions that have transfer windows (built into orbits.js)
   const TRANSFER_IDS = new Set([
     'mangalyaan','chandrayaan1','chandrayaan2','chandrayaan3',
     'adityaL1','shukrayaan','lupex','chandrayaan4',
   ]);
 
-  if (!selectedMission) return null;
-  if (!TRANSFER_IDS.has(selectedMission.id) && selectedMission.type !== 'transfer') return null;
-
-  const mission = missions.find(m => m.id === selectedMission.id);
-  if (!mission) return null;
+  const transferMissions = missions.filter(m =>
+    TRANSFER_IDS.has(m.id) || m.type === 'transfer'
+  );
 
   return (
-    <TrajectoryPath
-      key={mission.id}
-      mission={mission}
-      date={date}
-      isSelected={true}
-      alwaysShow={true}
-    />
+    <>
+      {transferMissions.map(m => (
+        <TrajectoryPath
+          key={m.id}
+          mission={m}
+          date={date}
+          isSelected={selectedMission?.id === m.id}
+          alwaysShow={true}
+        />
+      ))}
+    </>
   );
 }
 
@@ -1102,18 +982,12 @@ function Scene({ date, missions, selectedMission, flyTarget, onFlyDone, onMissio
   const selTarget = selectedMission?.orbitTarget;
   return (
     <>
-      {/* Ambient — lifted so outer planets (Uranus, Neptune) stay visible at overview */}
-      <ambientLight intensity={0.45} color="#b8d4ff"/>
-      {/* Hemisphere — warm top (sun-facing), cool blue bottom (space) */}
-      <hemisphereLight skyColor="#ffe8c0" groundColor="#0a1530" intensity={0.35}/>
+      <ambientLight intensity={0.07}/>
       <Stars radius={600} depth={150} count={10000} factor={7} fade speed={0.25}/>
       <CameraController flyTarget={flyTarget} onDone={onFlyDone} cameraPreset={cameraPreset} fovOverride={fovOverride}/>
       <Sun onClick={onPlanetClick} onHover={onHover} showLabels={showLabels} sizeMode={sizeMode} sizeMultiplier={sizeMultiplier}/>
       {planetIds.map(id=>(
         <OrbitPath key={id} planetId={id} date={date} highlight={selTarget===id} brightness={orbitBrightness}/>
-      ))}
-      {planetIds.map(id=>(
-        <PlanetTrail key={'trail-'+id} planetId={id} date={date}/>
       ))}
       {planetIds.map(id=>(
         <Planet key={id} planetId={id} date={date} onHover={onHover} onClick={onPlanetClick} isHighlighted={selTarget===id} showLabels={showLabels} sizeMode={sizeMode} sizeMultiplier={sizeMultiplier}/>
@@ -1124,18 +998,9 @@ function Scene({ date, missions, selectedMission, flyTarget, onFlyDone, onMissio
       <KuiperBelt/>
       {showConstellation && <IndianSatelliteConstellation date={date}/>}
       <Moon date={date} onHover={onHover} onClick={onMoonClick} isSelected={selectedMoon}/>
-      {/* Mars orbiter — always rendered at its computed position */}
-      {missions.filter(m => m.id === 'mangalyaan').map(m=>(
+      {missions.map(m=>(
         <Spacecraft key={m.id} mission={m} date={date} isSelected={selectedMission?.id===m.id} onClick={onMissionClick} showLabels={showLabels} scaleMultiplier={scaleMultiplier}/>
       ))}
-      {/* Lunar missions — only rendered when selected, positioned at the Moon */}
-      {missions.filter(m => ['chandrayaan1','chandrayaan2','chandrayaan3','lupex','chandrayaan4'].includes(m.id) && selectedMission?.id === m.id).map(m => {
-        const moonPos = getMoonScenePos(date);
-        const overrideMission = { ...m, _posOverride: moonPos };
-        return (
-          <Spacecraft key={m.id} mission={overrideMission} date={date} isSelected={true} onClick={onMissionClick} showLabels={showLabels} scaleMultiplier={scaleMultiplier}/>
-        );
-      })}
       <AllTrajectories missions={missions} selectedMission={selectedMission} date={date}/>
     </>
   );
@@ -1160,45 +1025,16 @@ export default function SolarSystem({ date, missions = [], selectedMission, onMi
           onHover={setHovered} showConstellation={showConstellation}
           orbitBrightness={orbitBrightness} missions={missions} showLabels={showLabels} scaleMultiplier={scaleMultiplier} sizeMode={sizeMode} sizeMultiplier={sizeMultiplier} cameraPreset={cameraPreset} fovOverride={fovOverride}/>
       </Canvas>
-      {hovered && (() => {
-        const info = PLANET_INFO[hovered.id] || null;
-        if (!info) return (
-          <div className="hover-tooltip" style={{ left:tipPos.x, top:tipPos.y }}>
-            <div className="tooltip-name">{hovered.name}</div>
-            <div className="tooltip-detail">{hovered.statusLabel||''}</div>
+      {hovered && (
+        <div className="hover-tooltip" style={{ left:tipPos.x, top:tipPos.y }}>
+          <div className="tooltip-name">{hovered.name}</div>
+          <div className="tooltip-detail">
+            {hovered.type==='planet'||hovered.type==='star'||hovered.type==='moon'
+              ? `${hovered.diameter||''} · ${hovered.moons??0} moon${hovered.moons!==1?'s':''}`
+              : hovered.statusLabel||''}
           </div>
-        );
-        return (
-          <div className="planet-card" style={{ left:tipPos.x, top:tipPos.y }}>
-            {/* Header */}
-            <div className="pc-header">
-              <span className="pc-dot" style={{ background: info.color, boxShadow: `0 0 8px ${info.color}` }}/>
-              <span className="pc-name">{hovered.name}</span>
-              <span className="pc-type">{info.type}</span>
-            </div>
-            {/* Stats grid */}
-            <div className="pc-grid">
-              <div className="pc-stat"><span className="pc-label">Diameter</span><span className="pc-val">{info.diameter}</span></div>
-              <div className="pc-stat"><span className="pc-label">Mass</span><span className="pc-val">{info.mass}</span></div>
-              <div className="pc-stat"><span className="pc-label">Avg Temp</span><span className="pc-val">{info.temp}</span></div>
-              <div className="pc-stat"><span className="pc-label">Gravity</span><span className="pc-val">{info.gravity}</span></div>
-              <div className="pc-stat"><span className="pc-label">Distance</span><span className="pc-val">{info.distance}</span></div>
-              <div className="pc-stat"><span className="pc-label">Orbit Period</span><span className="pc-val">{info.period}</span></div>
-              <div className="pc-stat"><span className="pc-label">Rotation</span><span className="pc-val">{info.rotation}</span></div>
-              <div className="pc-stat"><span className="pc-label">Moons</span><span className="pc-val">{info.moons}</span></div>
-            </div>
-            {/* Fact */}
-            <div className="pc-fact">{info.fact}</div>
-            {/* ISRO link */}
-            {info.isroLink && (
-              <div className="pc-isro">
-                <span className="pc-isro-badge">🇮🇳 ISRO</span>
-                <span className="pc-isro-text">{info.isroLink}</span>
-              </div>
-            )}
-          </div>
-        );
-      })()}
+        </div>
+      )}
     </div>
   );
 }

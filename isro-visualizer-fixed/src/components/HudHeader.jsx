@@ -93,7 +93,6 @@ function Divider() {
 export default function HudHeader({
   showOrbits, onToggleOrbits, orbitBrightness, onOrbitBrightness,
   showConstellation, onToggleConstellation,
-  showConjunctions, onToggleConjunctions,
   showLabels, onToggleLabels,
   showUpcoming, onToggleUpcoming,
   soundEnabled, onToggleSound,
@@ -101,7 +100,6 @@ export default function HudHeader({
   onFocusObject,
   compareMode, onToggleCompare,
   onAddMission,
-  rulerMode, onToggleRuler,
   scaleMultiplier, onScaleMultiplier,
   sizeMode, onSizeMode, sizeMultiplier, onSizeMultiplier,
   cameraPreset, onSetPreset, fov, onSetFov,
@@ -213,17 +211,6 @@ export default function HudHeader({
               color: showConstellation ? 'var(--accent-primary)' : 'var(--text-muted)',
             }}>{showConstellation ? 'ON' : 'OFF'}</button>
           </div>
-          {/* Conjunctions & Oppositions */}
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-            <span style={{ fontFamily:'var(--font-body)', fontSize:12, fontWeight:500, color:'var(--text-primary)' }}>⟡ Conjunctions</span>
-            <button onClick={onToggleConjunctions} style={{
-              padding:'2px 10px', borderRadius:3, cursor:'pointer',
-              fontFamily:'var(--font-mono)', fontSize:8, letterSpacing:'0.1em',
-              background: showConjunctions ? 'rgba(0,201,177,0.16)' : 'transparent',
-              border:`1px solid ${showConjunctions ? 'var(--border-active)' : 'var(--border-subtle)'}`,
-              color: showConjunctions ? 'var(--accent-primary)' : 'var(--text-muted)',
-            }}>{showConjunctions ? 'ON' : 'OFF'}</button>
-          </div>
         </Dropdown>
 
         {/* ── Scale ── Planet sizes + spacecraft scale */}
@@ -287,14 +274,6 @@ export default function HudHeader({
             }}>
               <div style={{ fontFamily:'var(--font-body)', fontSize:12, fontWeight:600, color:'var(--accent-primary)' }}>+ Add Custom Mission</div>
               <div style={{ fontFamily:'var(--font-mono)', fontSize:8, color:'var(--text-muted)', marginTop:2 }}>Custom satellite or spacecraft</div>
-            </button>
-            <button onClick={onToggleRuler} style={{
-              padding:'8px 10px', borderRadius:4, cursor:'pointer', textAlign:'left',
-              background: rulerMode ? 'rgba(0,201,177,0.12)' : 'rgba(0,0,0,0.15)',
-              border:`1px solid ${rulerMode ? 'var(--border-active)' : 'var(--border-subtle)'}`,
-            }}>
-              <div style={{ fontFamily:'var(--font-body)', fontSize:12, fontWeight:600, color: rulerMode ? 'var(--accent-primary)' : 'var(--text-primary)' }}>📏 Distance Ruler</div>
-              <div style={{ fontFamily:'var(--font-mono)', fontSize:8, color:'var(--text-muted)', marginTop:2 }}>{rulerMode ? 'Active — click two objects' : 'Measure distance between objects'}</div>
             </button>
           </div>
         </Dropdown>
